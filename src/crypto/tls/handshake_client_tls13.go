@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/hmac"
+	"crypto/kem"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -22,7 +23,7 @@ type clientHandshakeStateTLS13 struct {
 	hello       *clientHelloMsg
 	helloInner  *clientHelloMsg
 	helloBase   *clientHelloMsg
-	ecdheParams ecdheParameters
+	keyShare    []clientKeySharePrivate // TODO: this needs to be a struct. Each KEM should probably have the same interface as ecdheParameters
 
 	session     *ClientSessionState
 	earlySecret []byte
@@ -89,7 +90,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	}
 
 	// Consistency check on the presence of a keyShare and its parameters.
-	if hs.ecdheParams == nil || len(hs.hello.keyShares) != 1 {
+	if hs.keyShare == nil || len(hs.hello.keyShares) != 2 {
 		return c.sendAlert(alertInternalError)
 	}
 
@@ -297,21 +298,35 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: server selected unsupported group")
 		}
-		if hs.ecdheParams.CurveID() == curveID {
-			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: server sent an unnecessary HelloRetryRequest key_share")
+		// TODO: this check needs to be in place for both kem and ecdhe
+		//if hs.ecdheParams.CurveID() == curveID {
+		//	c.sendAlert(alertIllegalParameter)
+		//	return errors.New("tls: server sent an unnecessary HelloRetryRequest key_share")
+		//}
+
+		// TODO: refactor
+		if curveID.isKEM() {
+			kemID := kem.ID(curveID)
+			pk, sk, err := kem.Keypair(c.config.rand(), kemID)
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: CurvePreferences includes unsupported curve")
+			}
+			hs.keyShare = []clientKeySharePrivate{sk}
+			hs.helloBase.keyShares = []keyShare{{group: CurveID(pk.KEMId), data: pk.PublicKey}}
+		} else {
+			if _, ok := curveForCurveID(curveID); curveID != X25519 && !ok {
+				c.sendAlert(alertInternalError)
+				return errors.New("tls: CurvePreferences includes unsupported curve")
+			}
+			params, err := generateECDHEParameters(c.config.rand(), curveID)
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return err
+			}
+			hs.keyShare = []clientKeySharePrivate{params}
+			hs.helloBase.keyShares = []keyShare{{group: curveID, data: params.PublicKey()}}
 		}
-		if _, ok := curveForCurveID(curveID); curveID != X25519 && !ok {
-			c.sendAlert(alertInternalError)
-			return errors.New("tls: CurvePreferences includes unsupported curve")
-		}
-		params, err := generateECDHEParameters(c.config.rand(), curveID)
-		if err != nil {
-			c.sendAlert(alertInternalError)
-			return err
-		}
-		hs.ecdheParams = params
-		hs.helloBase.keyShares = []keyShare{{group: curveID, data: params.PublicKey()}}
 	}
 
 	hs.helloBase.raw = nil
@@ -400,7 +415,22 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server did not send a key share")
 	}
-	if hs.serverHello.serverShare.group != hs.ecdheParams.CurveID() {
+
+	var found bool
+	for _, keyShare := range hs.keyShare {
+		if ecdheParams, ok := keyShare.(ecdheParameters); ok {
+			if hs.serverHello.serverShare.group == ecdheParams.CurveID() {
+				found = true
+			}
+		} else {
+			kemShare := keyShare.(kem.PrivateKey)
+			if CurveID(kemShare.KEMId) == hs.serverHello.serverShare.group {
+				found = true
+			}
+		}
+	}
+
+	if !found {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: server selected unsupported group")
 	}
@@ -438,10 +468,18 @@ func (hs *clientHandshakeStateTLS13) processServerHello() error {
 func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	c := hs.c
 
-	sharedKey := hs.ecdheParams.SharedKey(hs.serverHello.serverShare.data)
-	if sharedKey == nil {
-		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: invalid server key share")
+	var sharedKey []byte
+	for _, keyShare := range hs.keyShare {
+		if params, ok := keyShare.(ecdheParameters); ok && params.CurveID() == hs.serverHello.serverShare.group {
+			sharedKey = params.SharedKey(hs.serverHello.serverShare.data)
+		} else if kemPrivate, ok := keyShare.(kem.PrivateKey); ok && kemPrivate.KEMId == kem.ID(hs.serverHello.serverShare.group) {
+			var err error
+			sharedKey, err = kem.Decapsulate(&kemPrivate, hs.serverHello.serverShare.data)
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return err
+			}
+		}
 	}
 
 	earlySecret := hs.earlySecret
