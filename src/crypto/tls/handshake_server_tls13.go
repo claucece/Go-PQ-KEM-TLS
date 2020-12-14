@@ -29,6 +29,7 @@ type serverHandshakeStateTLS13 struct {
 	hello           *serverHelloMsg
 	sentDummyCCS    bool
 	usingPSK        bool
+	isKEMTLS        bool
 	suite           *cipherSuiteTLS13
 	cert            *Certificate
 	sigAlg          SignatureScheme
@@ -92,6 +93,13 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 	}
 	if err := hs.pickCertificate(); err != nil {
 		return err
+	}
+	if hs.isKEMTLS {
+		// do this separately because we don't want to be buffering
+		if err := hs.sendServerParameters(); err != nil {
+			return err
+		}
+		return hs.handshakeKEMTLS()
 	}
 	c.buffering = true
 	if err := hs.sendServerParameters(); err != nil {
@@ -477,7 +485,6 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 					return err
 				}
 			}
-			hs.cert.DelegatedCredential = dCred.raw
 
 			hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithmsDC)
 			if err != nil {
@@ -486,6 +493,9 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 				c.sendAlert(alertHandshakeFailure)
 				return err
 			}
+
+			hs.cert.DelegatedCredential = dCred.raw
+			hs.isKEMTLS = dCred.cred.expCertVerfAlgo.isKEMTLS()
 		}
 	}
 

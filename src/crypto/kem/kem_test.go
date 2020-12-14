@@ -16,7 +16,7 @@ func TestKemAPI(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			publicKey, privateKey, err := Keypair(rand.Reader, tt.kemID)
+			publicKey, privateKey, err := GenerateKey(rand.Reader, tt.kemID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -37,7 +37,7 @@ func TestKemAPI(t *testing.T) {
 
 	// check if nonexisting kem fails
 	invalidKemID := ID(0)
-	if _, _, err := Keypair(rand.Reader, invalidKemID); err == nil {
+	if _, _, err := GenerateKey(rand.Reader, invalidKemID); err == nil {
 		t.Fatal("This KEM should've been invalid and failed")
 	}
 

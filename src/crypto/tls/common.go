@@ -456,6 +456,15 @@ const (
 	KEMTLSWithSIKEp434 SignatureScheme = 0xfe00
 )
 
+func (scheme SignatureScheme) isKEMTLS() bool {
+	switch scheme {
+	case KEMTLSWithSIKEp434:
+		return true
+	default:
+		return false
+	}
+}
+
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide application logic in the GetCertificate and GetConfigForClient callbacks.
 type ClientHelloInfo struct {
@@ -1412,11 +1421,13 @@ func (c *Config) BuildNameToCertificate() {
 }
 
 const (
-	keyLogLabelTLS12           = "CLIENT_RANDOM"
-	keyLogLabelClientHandshake = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
-	keyLogLabelServerHandshake = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
-	keyLogLabelClientTraffic   = "CLIENT_TRAFFIC_SECRET_0"
-	keyLogLabelServerTraffic   = "SERVER_TRAFFIC_SECRET_0"
+	keyLogLabelTLS12                        = "CLIENT_RANDOM"
+	keyLogLabelClientHandshake              = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelServerHandshake              = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelClientAuthenticatedHandshake = "CLIENT_AUTHENTICATED_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelServerAuthenticatedHandshake = "SERVER_AUTHENTICATED_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelClientTraffic                = "CLIENT_TRAFFIC_SECRET_0"
+	keyLogLabelServerTraffic                = "SERVER_TRAFFIC_SECRET_0"
 )
 
 func (c *Config) writeKeyLog(label string, clientRandom, secret []byte) error {

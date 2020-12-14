@@ -35,6 +35,7 @@ type clientHandshakeStateTLS13 struct {
 	suite           *cipherSuiteTLS13
 	transcript      hash.Hash
 	transcriptInner hash.Hash
+	handshakeSecret []byte
 	masterSecret    []byte
 	trafficSecret   []byte // client_application_traffic_secret_0
 }
@@ -154,6 +155,9 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	}
 	if err := hs.readServerCertificate(); err != nil {
 		return err
+	}
+	if c.verifiedDC != nil && c.verifiedDC.cred.expCertVerfAlgo.isKEMTLS() {
+		return hs.handshakeKEMTLS()
 	}
 	if err := hs.readServerFinished(); err != nil {
 		return err
@@ -307,7 +311,7 @@ func (hs *clientHandshakeStateTLS13) processHelloRetryRequest() error {
 		// TODO: refactor
 		if curveID.isKEM() {
 			kemID := kem.ID(curveID)
-			pk, sk, err := kem.Keypair(c.config.rand(), kemID)
+			pk, sk, err := kem.GenerateKey(c.config.rand(), kemID)
 			if err != nil {
 				c.sendAlert(alertInternalError)
 				return errors.New("tls: CurvePreferences includes unsupported curve")
@@ -507,8 +511,7 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		return err
 	}
 
-	hs.masterSecret = hs.suite.extract(nil,
-		hs.suite.deriveSecret(handshakeSecret, "derived", nil))
+	hs.handshakeSecret = handshakeSecret
 
 	return nil
 }
@@ -673,6 +676,8 @@ func (hs *clientHandshakeStateTLS13) readServerFinished() error {
 	hs.transcript.Write(finished.marshal())
 
 	// Derive secrets that take context through the server Finished.
+	hs.masterSecret = hs.suite.extract(nil,
+		hs.suite.deriveSecret(hs.handshakeSecret, "derived", nil))
 
 	hs.trafficSecret = hs.suite.deriveSecret(hs.masterSecret,
 		clientApplicationTrafficLabel, hs.transcript)

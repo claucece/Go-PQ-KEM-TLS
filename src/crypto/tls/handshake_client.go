@@ -146,7 +146,7 @@ func (c *Conn) makeClientHello(minVersion uint16) (*clientHelloMsg, []clientKeyS
 				// this also enables KEMTLS support for now. TODO(Thom)
 				//hello.supportedSignatureAlgorithms = append(hello.supportedSignatureAlgorithms, )
 				kemID := kem.ID(curveID)
-				pk, sk, err := kem.Keypair(config.rand(), kemID)
+				pk, sk, err := kem.GenerateKey(config.rand(), kemID)
 				if err != nil {
 					return nil, nil, err
 				}

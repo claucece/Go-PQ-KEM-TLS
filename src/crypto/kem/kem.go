@@ -22,6 +22,11 @@ const (
 	Kyber512 ID = 0x01fd
 	// SIKEp434 is a post-quantum KEM
 	SIKEp434 ID = 0x01fe
+
+	// minimum
+	minKEM = KEM25519
+	// maximum
+	maxKEM = SIKEp434
 )
 
 // PrivateKey is a private key.
@@ -45,16 +50,21 @@ func MarshalPublicKey(pubKey PublicKey) []byte {
 }
 
 // UnmarshalPublicKey produces a PublicKey from a byte array.
-func UnmarshalPublicKey(algorithm ID, input []byte) PublicKey {
-	return PublicKey{
-		KEMId:     algorithm,
-		PublicKey: input,
+func UnmarshalPublicKey(input []byte) (PublicKey, error) {
+	id := ID(binary.LittleEndian.Uint16(input[:4]))
+	if id < minKEM || id > maxKEM {
+		return PublicKey{}, errors.New("Invalid KEM type")
 	}
+
+	return PublicKey{
+		KEMId:     id,
+		PublicKey: input,
+	}, nil
 }
 
-// Keypair generates a keypair for a given KEM.
+// GenerateKey generates a keypair for a given KEM.
 // It returns a public and private key.
-func Keypair(rand io.Reader, kemID ID) (PublicKey, PrivateKey, error) {
+func GenerateKey(rand io.Reader, kemID ID) (PublicKey, PrivateKey, error) {
 	switch kemID {
 	case KEM25519:
 		privateKey := make([]byte, curve25519.ScalarSize)
