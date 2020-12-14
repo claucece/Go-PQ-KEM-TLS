@@ -2,6 +2,7 @@ package kem
 
 import (
 	"circl/dh/sidh"
+	"circl/kem/schemes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -41,46 +42,56 @@ type PublicKey struct {
 	PublicKey []byte
 }
 
-// MarshalPublicKey returns the byte representation of a public key.
-func MarshalPublicKey(pubKey PublicKey) []byte {
-	buf := make([]byte, 4+len(pubKey.PublicKey))
+// MarshalBinary returns the byte representation of a public key.
+func MarshalBinary(pubKey *PublicKey) ([]byte, error) {
+	buf := make([]byte, 2+len(pubKey.PublicKey))
 	binary.LittleEndian.PutUint16(buf, uint16(pubKey.KEMId))
-	copy(buf[4:], pubKey.PublicKey)
-	return buf
+	copy(buf[2:], pubKey.PublicKey)
+	return buf, nil
 }
 
-// UnmarshalPublicKey produces a PublicKey from a byte array.
-func UnmarshalPublicKey(input []byte) (PublicKey, error) {
-	id := ID(binary.LittleEndian.Uint16(input[:4]))
+// UnmarshalBinary produces a PublicKey from a byte array.
+func (pubKey *PublicKey) UnmarshalBinary(data []byte) error {
+	id := ID(binary.LittleEndian.Uint16(data[:2]))
 	if id < minKEM || id > maxKEM {
-		return PublicKey{}, errors.New("Invalid KEM type")
+		return errors.New("Invalid KEM type")
 	}
 
-	return PublicKey{
-		KEMId:     id,
-		PublicKey: input,
-	}, nil
+	pubKey.KEMId = id
+	pubKey.PublicKey = data[2:]
+	return nil
 }
 
 // GenerateKey generates a keypair for a given KEM.
 // It returns a public and private key.
-func GenerateKey(rand io.Reader, kemID ID) (PublicKey, PrivateKey, error) {
+func GenerateKey(rand io.Reader, kemID ID) (*PublicKey, *PrivateKey, error) {
 	switch kemID {
+	case Kyber512:
+		scheme := schemes.ByName("Kyber512")
+		seed := make([]byte, scheme.SeedSize())
+		if _, err := io.ReadFull(rand, seed); err != nil {
+			return nil, nil, err
+		}
+		publicKey, privateKey := scheme.DeriveKey(seed)
+		pk, _ := publicKey.MarshalBinary()
+		sk, _ := privateKey.MarshalBinary()
+
+		return &PublicKey{KEMId: kemID, PublicKey: pk}, &PrivateKey{KEMId: kemID, PrivateKey: sk}, nil
 	case KEM25519:
 		privateKey := make([]byte, curve25519.ScalarSize)
 		if _, err := io.ReadFull(rand, privateKey); err != nil {
-			return PublicKey{}, PrivateKey{}, err
+			return nil, nil, err
 		}
 		publicKey, err := curve25519.X25519(privateKey, curve25519.Basepoint)
 		if err != nil {
-			return PublicKey{}, PrivateKey{}, err
+			return nil, nil, err
 		}
-		return PublicKey{KEMId: kemID, PublicKey: publicKey}, PrivateKey{KEMId: kemID, PrivateKey: privateKey}, nil
+		return &PublicKey{KEMId: kemID, PublicKey: publicKey}, &PrivateKey{KEMId: kemID, PrivateKey: privateKey}, nil
 	case SIKEp434:
 		privateKey := sidh.NewPrivateKey(sidh.Fp434, sidh.KeyVariantSike)
 		publicKey := sidh.NewPublicKey(sidh.Fp434, sidh.KeyVariantSike)
 		if err := privateKey.Generate(rand); err != nil {
-			return PublicKey{}, PrivateKey{}, err
+			return nil, nil, err
 		}
 		privateKey.GeneratePublicKey(publicKey)
 
@@ -88,9 +99,9 @@ func GenerateKey(rand io.Reader, kemID ID) (PublicKey, PrivateKey, error) {
 		privBytes := make([]byte, privateKey.Size())
 		publicKey.Export(pubBytes)
 		privateKey.Export(privBytes)
-		return PublicKey{KEMId: kemID, PublicKey: pubBytes}, PrivateKey{KEMId: kemID, PrivateKey: privBytes}, nil
+		return &PublicKey{KEMId: kemID, PublicKey: pubBytes}, &PrivateKey{KEMId: kemID, PrivateKey: privBytes}, nil
 	default:
-		return PublicKey{}, PrivateKey{}, fmt.Errorf("crypto/kem: internal error: unsupported KEM %d", kemID)
+		return nil, nil, fmt.Errorf("crypto/kem: internal error: unsupported KEM %d", kemID)
 	}
 
 }
@@ -98,6 +109,24 @@ func GenerateKey(rand io.Reader, kemID ID) (PublicKey, PrivateKey, error) {
 // Encapsulate returns a shared secret and a ciphertext.
 func Encapsulate(rand io.Reader, pk *PublicKey) ([]byte, []byte, error) {
 	switch pk.KEMId {
+	case Kyber512:
+		scheme := schemes.ByName("Kyber512")
+		pub, err := scheme.UnmarshalBinaryPublicKey(pk.PublicKey)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		seed := make([]byte, scheme.EncapsulationSeedSize())
+		if _, err := io.ReadFull(rand, seed); err != nil {
+			return nil, nil, err
+		}
+
+		ct, ss, err := scheme.EncapsulateDeterministically(pub, seed)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return ss, ct, nil
 	case KEM25519:
 		privateKey := make([]byte, curve25519.ScalarSize)
 		if _, err := io.ReadFull(rand, privateKey); err != nil {
@@ -115,10 +144,18 @@ func Encapsulate(rand io.Reader, pk *PublicKey) ([]byte, []byte, error) {
 	case SIKEp434:
 		kem := sidh.NewSike434(rand)
 		sikepk := sidh.NewPublicKey(sidh.Fp434, sidh.KeyVariantSike)
-		sikepk.Import(pk.PublicKey)
+		err := sikepk.Import(pk.PublicKey)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		ct := make([]byte, kem.CiphertextSize())
 		ss := make([]byte, kem.SharedSecretSize())
-		kem.Encapsulate(ct, ss, sikepk)
+		err = kem.Encapsulate(ct, ss, sikepk)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		return ss, ct, nil
 	default:
 		return nil, nil, errors.New("crypto/kem: internal error: unsupported KEM in Encapsulate")
@@ -128,6 +165,21 @@ func Encapsulate(rand io.Reader, pk *PublicKey) ([]byte, []byte, error) {
 // Decapsulate generates the shared secret.
 func Decapsulate(privateKey *PrivateKey, ciphertext []byte) ([]byte, error) {
 	switch privateKey.KEMId {
+	case Kyber512:
+		scheme := schemes.ByName("Kyber512")
+		sk, err := scheme.UnmarshalBinaryPrivateKey(privateKey.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		if len(ciphertext) != scheme.CiphertextSize() {
+			return nil, fmt.Errorf("crypto/kem: ciphertext is of len %d, expected %d", len(ciphertext), scheme.CiphertextSize())
+		}
+		ss, err := scheme.Decapsulate(sk, ciphertext)
+		if err != nil {
+			return nil, err
+		}
+
+		return ss, nil
 	case KEM25519:
 		sharedSecret, err := curve25519.X25519(privateKey.PrivateKey, ciphertext)
 		if err != nil {
@@ -137,11 +189,19 @@ func Decapsulate(privateKey *PrivateKey, ciphertext []byte) ([]byte, error) {
 	case SIKEp434:
 		kem := sidh.NewSike434(nil)
 		sikesk := sidh.NewPrivateKey(sidh.Fp434, sidh.KeyVariantSike)
-		sikesk.Import(privateKey.PrivateKey)
+		err := sikesk.Import(privateKey.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
+
 		sikepk := sidh.NewPublicKey(sidh.Fp434, sidh.KeyVariantSike)
 		sikesk.GeneratePublicKey(sikepk)
 		ss := make([]byte, kem.SharedSecretSize())
-		kem.Decapsulate(ss, sikesk, sikepk, ciphertext)
+		err = kem.Decapsulate(ss, sikesk, sikepk, ciphertext)
+		if err != nil {
+			return nil, err
+		}
+
 		return ss, nil
 	default:
 		return nil, errors.New("crypto/kem: internal error: unsupported KEM in Decapsulate")

@@ -94,19 +94,15 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 	if err := hs.pickCertificate(); err != nil {
 		return err
 	}
-	if hs.isKEMTLS {
-		// do this separately because we don't want to be buffering
-		if err := hs.sendServerParameters(); err != nil {
-			return err
-		}
-		return hs.handshakeKEMTLS()
-	}
 	c.buffering = true
 	if err := hs.sendServerParameters(); err != nil {
 		return err
 	}
 	if err := hs.sendServerCertificate(); err != nil {
 		return err
+	}
+	if hs.isKEMTLS {
+		return hs.handshakeKEMTLS()
 	}
 	if err := hs.sendServerFinished(); err != nil {
 		return err

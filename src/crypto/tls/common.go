@@ -124,11 +124,12 @@ const (
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
 	SIKEp434  CurveID = CurveID(kem.SIKEp434)
+	Kyber512  CurveID = CurveID(kem.Kyber512)
 )
 
 func (curve CurveID) isKEM() bool {
 	switch curve {
-	case SIKEp434:
+	case SIKEp434, Kyber512:
 		return true
 	}
 	return false
@@ -219,6 +220,7 @@ var supportedSignatureAlgorithmsDC = []SignatureScheme{
 	PKCS1WithSHA1,
 	ECDSAWithSHA1,
 	KEMTLSWithSIKEp434,
+	KEMTLSWithKyber512,
 }
 
 // helloRetryRequestRandom is set as the Random value of a ServerHello
@@ -454,11 +456,12 @@ const (
 
 	// KEMTLS algorithms for the PQ experiment. Do not use outside the experiment.
 	KEMTLSWithSIKEp434 SignatureScheme = 0xfe00
+	KEMTLSWithKyber512 SignatureScheme = 0xfe01
 )
 
 func (scheme SignatureScheme) isKEMTLS() bool {
 	switch scheme {
-	case KEMTLSWithSIKEp434:
+	case KEMTLSWithSIKEp434, KEMTLSWithKyber512:
 		return true
 	default:
 		return false
@@ -1124,7 +1127,7 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
 	return versions
 }
 
-var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521, SIKEp434}
+var defaultCurvePreferences = []CurveID{SIKEp434, Kyber512, X25519, CurveP256, CurveP384, CurveP521}
 
 func (c *Config) curvePreferences() []CurveID {
 	if c == nil || len(c.CurvePreferences) == 0 {

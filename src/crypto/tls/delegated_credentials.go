@@ -139,7 +139,7 @@ func (cred *credential) marshalPublicKeyInfo() ([]byte, error) {
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512,
 		Ed25519,
-		KEMTLSWithSIKEp434:
+		KEMTLSWithSIKEp434, KEMTLSWithKyber512:
 		serPub, err := x509.MarshalPKIXPublicKey(cred.publicKey)
 		if err != nil {
 			return nil, err
@@ -173,15 +173,18 @@ func unmarshalPublicKeyInfo(serialized []byte) (crypto.PublicKey, SignatureSchem
 		}
 	case ed25519.PublicKey:
 		return pk, Ed25519, nil
-	case kem.PublicKey:
+	case *kem.PublicKey:
 		switch pk.KEMId {
 		case kem.SIKEp434:
 			return pk, KEMTLSWithSIKEp434, nil
+		case kem.Kyber512:
+			return pk, KEMTLSWithKyber512, nil
 		}
-		return nil, 0, fmt.Errorf("tls: unsupported KEM delegation key type with: %x", pk.KEMId)
 	default:
 		return nil, 0, fmt.Errorf("tls: unsupported delgation key type: %T", pk)
 	}
+
+	return nil, 0, nil
 }
 
 // marshal encodes the credential struct of the Delegated Credential.
@@ -418,6 +421,11 @@ func NewDelegatedCredential(cert *Certificate, pubAlgo SignatureScheme, validTim
 		}
 	case KEMTLSWithSIKEp434:
 		pubK, privK, err = kem.GenerateKey(rand.Reader, kem.SIKEp434)
+		if err != nil {
+			return nil, nil, err
+		}
+	case KEMTLSWithKyber512:
+		pubK, privK, err = kem.GenerateKey(rand.Reader, kem.Kyber512)
 		if err != nil {
 			return nil, nil, err
 		}

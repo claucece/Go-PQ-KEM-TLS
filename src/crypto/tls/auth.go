@@ -118,7 +118,7 @@ func typeAndHashFromSignatureScheme(signatureAlgorithm SignatureScheme) (sigType
 		sigType = signatureECDSA
 	case Ed25519:
 		sigType = signatureEd25519
-	case KEMTLSWithSIKEp434:
+	case KEMTLSWithSIKEp434, KEMTLSWithKyber512:
 		sigType = authKEMTLS
 	default:
 		scheme := circlPki.SchemeByTLSID(uint(signatureAlgorithm))
@@ -142,7 +142,7 @@ func typeAndHashFromSignatureScheme(signatureAlgorithm SignatureScheme) (sigType
 		hash = crypto.SHA512
 	case Ed25519:
 		hash = directSigning
-	case KEMTLSWithSIKEp434:
+	case KEMTLSWithSIKEp434, KEMTLSWithKyber512:
 		hash = directSigning // TODO: check
 	default:
 		scheme := circlPki.SchemeByTLSID(uint(signatureAlgorithm))
