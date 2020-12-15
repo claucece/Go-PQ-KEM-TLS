@@ -17,12 +17,10 @@ type ID uint16
 const (
 	// KEM25519 is X25519 as a KEM. Not quantum-safe.
 	KEM25519 ID = 0x01fb
-	// CSIDH is a post-quantum NIKE
-	CSIDH ID = 0x01fc
 	// Kyber512 is a post-quantum KEM based on MLWE
-	Kyber512 ID = 0x01fd
+	Kyber512 ID = 0x01fc
 	// SIKEp434 is a post-quantum KEM
-	SIKEp434 ID = 0x01fe
+	SIKEp434 ID = 0x01fd
 
 	// minimum
 	minKEM = KEM25519
@@ -43,7 +41,7 @@ type PublicKey struct {
 }
 
 // MarshalBinary returns the byte representation of a public key.
-func MarshalBinary(pubKey *PublicKey) ([]byte, error) {
+func (pubKey *PublicKey) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, 2+len(pubKey.PublicKey))
 	binary.LittleEndian.PutUint16(buf, uint16(pubKey.KEMId))
 	copy(buf[2:], pubKey.PublicKey)

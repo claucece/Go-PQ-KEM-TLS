@@ -91,7 +91,7 @@ func (hs *clientHandshakeStateTLS13) handshake() error {
 	}
 
 	// Consistency check on the presence of a keyShare and its parameters.
-	if hs.keyShare == nil || len(hs.hello.keyShares) != 2 {
+	if hs.keyShare == nil || len(hs.hello.keyShares) != len(hs.keyShare) {
 		return c.sendAlert(alertInternalError)
 	}
 
@@ -490,13 +490,14 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 	if !hs.usingPSK {
 		earlySecret = hs.suite.extract(nil, nil)
 	}
-	handshakeSecret := hs.suite.extract(sharedKey,
+
+	hs.handshakeSecret = hs.suite.extract(sharedKey,
 		hs.suite.deriveSecret(earlySecret, "derived", nil))
 
-	clientSecret := hs.suite.deriveSecret(handshakeSecret,
+	clientSecret := hs.suite.deriveSecret(hs.handshakeSecret,
 		clientHandshakeTrafficLabel, hs.transcript)
 	c.out.setTrafficSecret(hs.suite, clientSecret)
-	serverSecret := hs.suite.deriveSecret(handshakeSecret,
+	serverSecret := hs.suite.deriveSecret(hs.handshakeSecret,
 		serverHandshakeTrafficLabel, hs.transcript)
 	c.in.setTrafficSecret(hs.suite, serverSecret)
 
@@ -510,8 +511,6 @@ func (hs *clientHandshakeStateTLS13) establishHandshakeKeys() error {
 		c.sendAlert(alertInternalError)
 		return err
 	}
-
-	hs.handshakeSecret = handshakeSecret
 
 	return nil
 }

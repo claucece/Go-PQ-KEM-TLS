@@ -15,7 +15,7 @@ func (hs *clientHandshakeStateTLS13) handshakeKEMTLS() error {
 	c := hs.c
 
 	// Send over KEM CT and derive AHS
-	if err := hs.sendClientKemCiphertext(); err != nil {
+	if err := hs.sendClientKEMCiphertext(); err != nil {
 		return err
 	}
 	if hs.certReq != nil {
@@ -38,7 +38,7 @@ func (hs *clientHandshakeStateTLS13) handshakeKEMTLS() error {
 	return nil
 }
 
-func (hs *clientHandshakeStateTLS13) sendClientKemCiphertext() error {
+func (hs *clientHandshakeStateTLS13) sendClientKEMCiphertext() error {
 	c := hs.c
 
 	pk := c.verifiedDC.cred.publicKey.(*kem.PublicKey)
@@ -90,9 +90,6 @@ func (hs *clientHandshakeStateTLS13) sendClientKemCiphertext() error {
 
 func (hs *clientHandshakeStateTLS13) sendKEMTLSClientFinished() error {
 	c := hs.c
-
-	hs.masterSecret = hs.suite.extract(nil,
-		hs.suite.deriveSecret(hs.handshakeSecret, "derived", nil))
 
 	finished := &finishedMsg{
 		verifyData: hs.suite.finishedHashKEMTLS(c.out.trafficSecret, "client", hs.transcript),

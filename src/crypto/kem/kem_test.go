@@ -34,7 +34,7 @@ func TestKemAPI(t *testing.T) {
 				t.Fatal("Decapsulated differing shared secret")
 			}
 
-			data, _ := MarshalBinary(publicKey)
+			data, _ := publicKey.MarshalBinary()
 			pk2 := new(PublicKey)
 			err = pk2.UnmarshalBinary(data)
 			if err != nil {

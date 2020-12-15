@@ -180,11 +180,10 @@ func unmarshalPublicKeyInfo(serialized []byte) (crypto.PublicKey, SignatureSchem
 		case kem.Kyber512:
 			return pk, KEMTLSWithKyber512, nil
 		}
+		return nil, 0, fmt.Errorf("tls: unsupported KEM delegation type: %T", pk)
 	default:
-		return nil, 0, fmt.Errorf("tls: unsupported delgation key type: %T", pk)
+		return nil, 0, fmt.Errorf("tls: unsupported delegation key type: %T", pk)
 	}
-
-	return nil, 0, nil
 }
 
 // marshal encodes the credential struct of the Delegated Credential.

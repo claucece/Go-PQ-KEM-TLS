@@ -49,13 +49,13 @@ func (hs *serverHandshakeStateTLS13) readClientKEMCiphertext() error {
 	}
 	hs.transcript.Write(kexMsg.marshal())
 
-	sk, ok := hs.cert.PrivateKey.(kem.PrivateKey)
+	sk, ok := hs.cert.PrivateKey.(*kem.PrivateKey)
 	if !ok {
 		c.sendAlert(alertInternalError)
 		return errors.New("crypto/tls: private key unexpectedly wrong type")
 	}
 
-	ss, err := kem.Decapsulate(&sk, kexMsg.ciphertext)
+	ss, err := kem.Decapsulate(sk, kexMsg.ciphertext)
 	if err != nil {
 		return err
 	}

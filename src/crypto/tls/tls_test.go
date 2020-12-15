@@ -1480,7 +1480,6 @@ func TestKEMEphemeralTLS13(t *testing.T) {
 		SIKEp434,
 		//Kyber512,
 	}
-
 	for _, kem := range tests {
 		clientConfig := testConfig.Clone()
 		clientConfig.CurvePreferences = []CurveID{kem}
@@ -1488,18 +1487,16 @@ func TestKEMEphemeralTLS13(t *testing.T) {
 		clientConfig.MaxVersion = VersionTLS13
 		serverConfig := testConfig.Clone()
 		if _, _, err := testHandshake(t, clientConfig, serverConfig); err != nil {
-			t.Fatalf("Failed to connect with KEM-only client with kem %x", kem)
+			t.Fatalf("Failed to connect with KEM-only client with kem %d", kem)
 		}
-
 		clientConfig = testConfig.Clone()
 		serverConfig = testConfig.Clone()
 		serverConfig.MinVersion = VersionTLS13
 		serverConfig.MaxVersion = VersionTLS13
 		serverConfig.CurvePreferences = []CurveID{kem}
 		if _, _, err := testHandshake(t, clientConfig, serverConfig); err != nil {
-			t.Fatalf("Failed to connect with KEM-only server with kem %x", kem)
+			t.Fatalf("Failed to connect with KEM-only server with kem %d", kem)
 		}
-
 		clientConfig.CurvePreferences = []CurveID{X25519}
 		if _, _, err := testHandshake(t, clientConfig, serverConfig); err == nil {
 			t.Fatal("Still connected with KEM-only server and no-KEM Client")
