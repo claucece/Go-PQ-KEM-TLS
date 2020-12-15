@@ -11,6 +11,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/kem"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
@@ -117,11 +118,21 @@ const (
 // only supports Elliptic Curve based groups. See RFC 8446, Section 4.2.7.
 type CurveID uint16
 
+func (curve CurveID) isKem() bool {
+	switch curve {
+	case SIKEp434, Kyber512:
+		return true
+	}
+	return false
+}
+
 const (
 	CurveP256 CurveID = 23
 	CurveP384 CurveID = 24
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
+	SIKEp434  CurveID = CurveID(kem.SIKEp434)
+	Kyber512  CurveID = CurveID(kem.Kyber512)
 )
 
 // TLS 1.3 Key Share. See RFC 8446, Section 4.2.8.
@@ -168,6 +179,7 @@ const (
 	signatureECDSA
 	signatureEd25519
 	signatureEdDilithium3
+	authKEMTLS
 )
 
 // directSigning is a standard Hash value that signals that no pre-hashing
@@ -207,6 +219,8 @@ var supportedSignatureAlgorithmsDC = []SignatureScheme{
 	ECDSAWithP521AndSHA512,
 	PKCS1WithSHA1,
 	ECDSAWithSHA1,
+	KEMTLSwithSIKEp434,
+	KEMTLSwithKyber512,
 }
 
 // helloRetryRequestRandom is set as the Random value of a ServerHello
@@ -439,7 +453,20 @@ const (
 	// Legacy signature and hash algorithms for TLS 1.2.
 	PKCS1WithSHA1 SignatureScheme = 0x0201
 	ECDSAWithSHA1 SignatureScheme = 0x0203
+
+	// KEMTLS algorithms
+	KEMTLSwithSIKEp434 SignatureScheme = 0xfe00
+	KEMTLSwithKyber512 SignatureScheme = 0xfe01
 )
+
+func (scheme SignatureScheme) isKEMTLS() bool {
+	switch scheme {
+	case KEMTLSwithSIKEp434, KEMTLSwithKyber512:
+		return true
+	default:
+		return false
+	}
+}
 
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide application logic in the GetCertificate and GetConfigForClient callbacks.
@@ -1100,7 +1127,7 @@ func supportedVersionsFromMax(maxVersion uint16) []uint16 {
 	return versions
 }
 
-var defaultCurvePreferences = []CurveID{X25519, CurveP256, CurveP384, CurveP521}
+var defaultCurvePreferences = []CurveID{Kyber512, SIKEp434, X25519, CurveP256, CurveP384, CurveP521}
 
 func (c *Config) curvePreferences() []CurveID {
 	if c == nil || len(c.CurvePreferences) == 0 {
@@ -1397,11 +1424,13 @@ func (c *Config) BuildNameToCertificate() {
 }
 
 const (
-	keyLogLabelTLS12           = "CLIENT_RANDOM"
-	keyLogLabelClientHandshake = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
-	keyLogLabelServerHandshake = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
-	keyLogLabelClientTraffic   = "CLIENT_TRAFFIC_SECRET_0"
-	keyLogLabelServerTraffic   = "SERVER_TRAFFIC_SECRET_0"
+	keyLogLabelTLS12                        = "CLIENT_RANDOM"
+	keyLogLabelClientHandshake              = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelServerHandshake              = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelClientAuthenticatedHandshake = "CLIENT_AUTHENTICATED_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelServerAuthenticatedHandshake = "SERVER_AUTHENTICATED_HANDSHAKE_TRAFFIC_SECRET"
+	keyLogLabelClientTraffic                = "CLIENT_TRAFFIC_SECRET_0"
+	keyLogLabelServerTraffic                = "SERVER_TRAFFIC_SECRET_0"
 )
 
 func (c *Config) writeKeyLog(label string, clientRandom, secret []byte) error {

@@ -22,6 +22,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/kem"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/binary"
@@ -137,7 +138,8 @@ func (cred *credential) marshalPublicKeyInfo() ([]byte, error) {
 	case ECDSAWithP256AndSHA256,
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512,
-		Ed25519:
+		Ed25519,
+		KEMTLSwithSIKEp434, KEMTLSwithKyber512:
 		serPub, err := x509.MarshalPKIXPublicKey(cred.publicKey)
 		if err != nil {
 			return nil, err
@@ -171,6 +173,14 @@ func unmarshalPublicKeyInfo(serialized []byte) (crypto.PublicKey, SignatureSchem
 		}
 	case ed25519.PublicKey:
 		return pk, Ed25519, nil
+	case *kem.PublicKey:
+		switch pk.Id {
+		case kem.SIKEp434:
+			return pk, KEMTLSwithSIKEp434, nil
+		case kem.Kyber512:
+			return pk, KEMTLSwithKyber512, nil
+		}
+		return nil, 0, errors.New("Unsupported KEM")
 	default:
 		return nil, 0, fmt.Errorf("tls: unsupported delgation key type: %T", pk)
 	}
@@ -405,6 +415,16 @@ func NewDelegatedCredential(cert *Certificate, pubAlgo SignatureScheme, validTim
 		pubK = privK.(*ecdsa.PrivateKey).Public()
 	case Ed25519:
 		pubK, privK, err = ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, nil, err
+		}
+	case KEMTLSwithSIKEp434:
+		pubK, privK, err = kem.Keypair(rand.Reader, kem.SIKEp434)
+		if err != nil {
+			return nil, nil, err
+		}
+	case KEMTLSwithKyber512:
+		pubK, privK, err = kem.Keypair(rand.Reader, kem.Kyber512)
 		if err != nil {
 			return nil, nil, err
 		}

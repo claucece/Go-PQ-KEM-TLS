@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/hmac"
+	"crypto/kem"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -89,7 +90,8 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 	if err := hs.checkForResumption(); err != nil {
 		return err
 	}
-	if err := hs.pickCertificate(); err != nil {
+	isKEMTLS, err := hs.pickCertificate()
+	if err != nil {
 		return err
 	}
 	c.buffering = true
@@ -97,6 +99,13 @@ func (hs *serverHandshakeStateTLS13) handshake() error {
 		return err
 	}
 	if err := hs.sendServerCertificate(); err != nil {
+		return err
+	}
+	// don't continue with TLS 1.3 if we're switching to KEMTLS
+	if isKEMTLS {
+		return hs.handshakeKEMTLS()
+	}
+	if err := hs.sendCertificateVerify(); err != nil {
 		return err
 	}
 	if err := hs.sendServerFinished(); err != nil {
@@ -269,18 +278,28 @@ GroupSelection:
 		}
 		clientKeyShare = &hs.clientHello.keyShares[0]
 	}
+	if selectedGroup.isKem() {
+		sharedKey, ciphertext, err := kem.Encapsulate(c.config.rand(), &kem.PublicKey{Id: kem.KemID(selectedGroup), PublicKey: clientKeyShare.data})
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: ciphertext}
+		hs.sharedKey = sharedKey
+	} else {
+		if _, ok := curveForCurveID(selectedGroup); selectedGroup != X25519 && !ok {
+			c.sendAlert(alertInternalError)
+			return errors.New("tls: CurvePreferences includes unsupported curve")
+		}
+		params, err := generateECDHEParameters(c.config.rand(), selectedGroup)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hs.hello.serverShare = keyShare{group: selectedGroup, data: params.PublicKey()}
+		hs.sharedKey = params.SharedKey(clientKeyShare.data)
+	}
 
-	if _, ok := curveForCurveID(selectedGroup); selectedGroup != X25519 && !ok {
-		c.sendAlert(alertInternalError)
-		return errors.New("tls: CurvePreferences includes unsupported curve")
-	}
-	params, err := generateECDHEParameters(c.config.rand(), selectedGroup)
-	if err != nil {
-		c.sendAlert(alertInternalError)
-		return err
-	}
-	hs.hello.serverShare = keyShare{group: selectedGroup, data: params.PublicKey()}
-	hs.sharedKey = params.SharedKey(clientKeyShare.data)
 	if hs.sharedKey == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: invalid client key share")
@@ -415,17 +434,17 @@ func cloneHash(in hash.Hash, h crypto.Hash) hash.Hash {
 	return out
 }
 
-func (hs *serverHandshakeStateTLS13) pickCertificate() error {
+func (hs *serverHandshakeStateTLS13) pickCertificate() (bool, error) {
 	c := hs.c
 
 	// Only one of PSK and certificates are used at a time.
 	if hs.usingPSK {
-		return nil
+		return false, nil
 	}
 
 	// signature_algorithms is required in TLS 1.3. See RFC 8446, Section 4.2.3.
 	if len(hs.clientHello.supportedSignatureAlgorithms) == 0 {
-		return c.sendAlert(alertMissingExtension)
+		return false, c.sendAlert(alertMissingExtension)
 	}
 
 	certificate, err := c.config.getCertificate(clientHelloInfo(c, hs.clientHello))
@@ -435,7 +454,7 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 		} else {
 			c.sendAlert(alertInternalError)
 		}
-		return err
+		return false, err
 	}
 
 	hs.sigAlg, err = selectSignatureScheme(c.vers, certificate, hs.clientHello.supportedSignatureAlgorithms)
@@ -443,25 +462,27 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 		// getCertificate returned a certificate that is unsupported or
 		// incompatible with the client's signature algorithms.
 		c.sendAlert(alertHandshakeFailure)
-		return err
+		return false, err
 	}
 
 	hs.cert = certificate
 
+	isKEMTLS := false
 	if hs.clientHello.delegatedCredentialSupported && len(hs.clientHello.supportedSignatureAlgorithmsDC) > 0 && c.config.GetDelegatedCredential != nil {
 		dCred, priv, err := c.config.GetDelegatedCredential(clientHelloInfo(c, hs.clientHello), nil)
 		if err != nil {
 			c.sendAlert(alertInternalError)
-			return nil
+			return false, nil
 		}
 
 		if dCred != nil && priv != nil {
+			isKEMTLS = dCred.cred.expCertVerfAlgo.isKEMTLS()
 			hs.cert.PrivateKey = priv
 			if dCred.raw == nil {
 				dCred.raw, err = dCred.marshal()
 				if err != nil {
 					c.sendAlert(alertInternalError)
-					return err
+					return false, err
 				}
 			}
 			hs.cert.DelegatedCredential = dCred.raw
@@ -471,12 +492,12 @@ func (hs *serverHandshakeStateTLS13) pickCertificate() error {
 				// getCertificate returned a certificate that is unsupported or
 				// incompatible with the client's signature algorithms.
 				c.sendAlert(alertHandshakeFailure)
-				return err
+				return isKEMTLS, err
 			}
 		}
 	}
 
-	return nil
+	return isKEMTLS, nil
 }
 
 // sendDummyChangeCipherSpec sends a ChangeCipherSpec record for compatibility
@@ -732,7 +753,14 @@ func (hs *serverHandshakeStateTLS13) sendServerCertificate() error {
 	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
 		return err
 	}
+	return nil
+}
 
+func (hs *serverHandshakeStateTLS13) sendCertificateVerify() error {
+	c := hs.c
+	if hs.usingPSK {
+		return nil
+	}
 	certVerifyMsg := new(certificateVerifyMsg)
 	certVerifyMsg.hasSignatureAlgorithm = true
 	certVerifyMsg.signatureAlgorithm = hs.sigAlg
